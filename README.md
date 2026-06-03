@@ -43,7 +43,7 @@ pr-preview delete --pr-number <N>
 |---|---|---|
 | `ECS_CLUSTER_NAME` | ECS cluster name | `myapp` |
 | `ALB_NAME` | Application Load Balancer name | `myapp` |
-| `HOSTED_ZONE` | Route53 hosted zone name | `example.com` |
+| `HOSTED_ZONE_ID` | Route53 hosted zone ID | `Z1234567890ABCDEF` |
 | `BASE_TASK_DEF` | Task Definition family to copy | `myapp` |
 | `PR_RESOURCE_PREFIX` | Prefix for all PR resources (TG / Service / TaskDef) | `myapp-pr` |
 | `BASE_DOMAIN` | Base domain for PR URLs | `example.com` |
@@ -59,8 +59,7 @@ pr-preview delete --pr-number <N>
 | `LB_CONTAINER_NAME` | `nginx` | Container name registered to the ALB Target Group |
 | `LB_CONTAINER_PORT` | `80` | Port of `LB_CONTAINER_NAME` |
 | `HEALTH_CHECK_PATH` | `/healthz` | ALB health check path |
-| `ENV_KEY_APP_URL` | `APP_URL` | Task Definition env key to set to the PR URL |
-| `ENV_KEYS_DOMAIN` | `SESSION_DOMAIN,SANCTUM_STATEFUL_DOMAINS` | Comma-separated Task Definition env keys to set to the PR domain |
+| `ENV_OVERRIDES` | _(none)_ | Comma-separated `KEY=template` pairs that rewrite Task Definition env vars. Placeholders: `{pr_url}` (PR URL with scheme), `{pr_domain}` (PR hostname only). Literal values are passed through as-is. Example: `APP_URL={pr_url},MY_DOMAIN={pr_domain},DEBUG=false` |
 
 #### Notification (optional)
 
@@ -85,7 +84,7 @@ jobs:
       # Required config
       ECS_CLUSTER_NAME: myapp
       ALB_NAME: myapp
-      HOSTED_ZONE: example.com
+      HOSTED_ZONE_ID: ${{ secrets.ROUTE53_HOSTED_ZONE_ID }}
       BASE_TASK_DEF: myapp
       PR_RESOURCE_PREFIX: myapp-pr
       BASE_DOMAIN: example.com
@@ -111,4 +110,36 @@ jobs:
             --pr-number "${{ env.PR_NUMBER }}" \
             --image-tag "${{ github.event.pull_request.head.sha }}" \
             --ecr-registry "${{ steps.login-ecr.outputs.registry }}"
+
+  delete-preview:
+    if: |
+      github.event.action == 'closed' ||
+      (github.event.action == 'unlabeled' && github.event.label.name == 'preview')
+    runs-on: ubuntu-latest
+    environment: development
+    env:
+      AWS_REGION: ap-northeast-1
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+      ECS_CLUSTER_NAME: myapp
+      ALB_NAME: myapp
+      HOSTED_ZONE_ID: ${{ secrets.ROUTE53_HOSTED_ZONE_ID }}
+      BASE_TASK_DEF: myapp
+      PR_RESOURCE_PREFIX: myapp-pr
+      BASE_DOMAIN: example.com
+      APP_ECR_REPOSITORY: myapp-app
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      GITHUB_REPOSITORY: ${{ github.repository }}
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26"
+      - name: Set AWS credentials
+        uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+      - name: Delete PR environment
+        run: |
+          go run github.com/tetsuya28/ecs-pr-preview/cmd/pr-preview@latest delete \
+            --pr-number "${{ env.PR_NUMBER }}"
 ```

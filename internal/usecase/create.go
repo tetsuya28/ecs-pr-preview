@@ -56,10 +56,6 @@ func (u *CreateUsecase) Execute(ctx context.Context, prNumber int, imageTag, ecr
 	if err != nil {
 		return err
 	}
-	hostedZoneID, err := u.r53.FindHostedZoneID(ctx, u.cfg.HostedZone)
-	if err != nil {
-		return err
-	}
 	netCfg, err := u.ecs.DescribeServiceNetworkConfig(ctx, u.cfg.ClusterName, u.cfg.BaseService)
 	if err != nil {
 		return err
@@ -102,7 +98,7 @@ func (u *CreateUsecase) Execute(ctx context.Context, prNumber int, imageTag, ecr
 	// 5. Upsert Route53 A record
 	log.Printf("==> Upserting Route53: %s", preview.Domain)
 	_ = u.notifier.Notify(ctx, fmt.Sprintf(":gear: [PR #%d] Configuring Route53 record...", prNumber))
-	if err := u.r53.UpsertAliasRecord(ctx, hostedZoneID, preview.Domain, alb.DNSName, alb.CanonicalZoneID); err != nil {
+	if err := u.r53.UpsertAliasRecord(ctx, u.cfg.HostedZoneID, preview.Domain, alb.DNSName, alb.CanonicalZoneID); err != nil {
 		return fmt.Errorf("upsert Route53 record: %w", err)
 	}
 
@@ -124,21 +120,39 @@ func (u *CreateUsecase) registerTaskDef(ctx context.Context, preview domain.PRPr
 		return "", err
 	}
 
+	// Pre-resolve all override values once.
+	resolved := make(map[string]string, len(u.cfg.EnvOverrides))
+	for key := range u.cfg.EnvOverrides {
+		if val, ok := u.cfg.EnvOverrides.Resolve(key, preview); ok {
+			resolved[key] = val
+		}
+	}
+
 	containers := td.ContainerDefinitions
 	for i, c := range containers {
-		if aws.ToString(c.Name) == u.cfg.AppContainerName {
+		isApp := aws.ToString(c.Name) == u.cfg.AppContainerName
+		if isApp {
 			containers[i].Image = aws.String(appImage)
 		}
+
+		// Update env vars that already exist in this container.
+		applied := make(map[string]bool, len(resolved))
 		for j, env := range containers[i].Environment {
 			key := aws.ToString(env.Name)
-			if key == u.cfg.AppURLEnvKey {
-				containers[i].Environment[j].Value = aws.String(preview.AppURL)
-			} else {
-				for _, domainKey := range u.cfg.DomainEnvKeys {
-					if key == domainKey {
-						containers[i].Environment[j].Value = aws.String(preview.Domain)
-						break
-					}
+			if val, ok := resolved[key]; ok {
+				containers[i].Environment[j].Value = aws.String(val)
+				applied[key] = true
+			}
+		}
+
+		// Append env vars that don't exist yet; only add to the app container.
+		if isApp {
+			for key, val := range resolved {
+				if !applied[key] {
+					containers[i].Environment = append(containers[i].Environment, ecstypes.KeyValuePair{
+						Name:  aws.String(key),
+						Value: aws.String(val),
+					})
 				}
 			}
 		}

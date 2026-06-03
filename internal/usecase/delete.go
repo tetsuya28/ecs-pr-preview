@@ -52,11 +52,6 @@ func (u *DeleteUsecase) Execute(ctx context.Context, prNumber int) error {
 	if err != nil {
 		return err
 	}
-	hostedZoneID, err := u.r53.FindHostedZoneID(ctx, u.cfg.HostedZone)
-	if err != nil {
-		return err
-	}
-
 	var firstErr error
 	warn := func(step string, err error) {
 		log.Printf("WARN: %s: %v", step, err)
@@ -109,7 +104,7 @@ func (u *DeleteUsecase) Execute(ctx context.Context, prNumber int) error {
 	// 5. Delete Route53 A record
 	log.Printf("==> Deleting Route53: %s", preview.Domain)
 	_ = u.notifier.Notify(ctx, fmt.Sprintf(":gear: [PR #%d] Deleting Route53 record...", prNumber))
-	if err := u.r53.DeleteAliasRecord(ctx, hostedZoneID, preview.Domain, alb.DNSName, alb.CanonicalZoneID); err != nil {
+	if err := u.r53.DeleteAliasRecord(ctx, u.cfg.HostedZoneID, preview.Domain, alb.DNSName, alb.CanonicalZoneID); err != nil {
 		log.Printf("WARN: delete Route53 record: %v", err)
 	} else {
 		_ = u.notifier.Notify(ctx, fmt.Sprintf(":white_check_mark: [PR #%d] Route53 record deleted", prNumber))
