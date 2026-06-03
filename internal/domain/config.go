@@ -36,7 +36,7 @@ type Config struct {
 	HealthCheckPath string // HEALTH_CHECK_PATH (e.g. "/healthz")
 
 	// EnvOverrides maps Task Definition env keys to value templates.
-	// Parsed from ENV_OVERRIDES (e.g. "APP_URL={pr_url},SESSION_DOMAIN={pr_domain},DEBUG=false").
+	// Parsed from ENV_OVERRIDES (e.g. "APP_URL={pr_url},COOKIE_DOMAIN={pr_domain},DEBUG=false").
 	// Placeholders: {pr_url} → PR URL with scheme, {pr_domain} → PR hostname only.
 	// Literal values (no placeholder) are passed through as-is.
 	EnvOverrides EnvOverrides // ENV_OVERRIDES

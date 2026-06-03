@@ -5,7 +5,7 @@ A CLI tool that creates and deletes per-PR preview environments on AWS ECS (Farg
 ## How it works
 
 On `create`:
-1. Copies the base Task Definition and updates the app image and environment variables (e.g. `APP_URL`, `SESSION_DOMAIN`).
+1. Copies the base Task Definition and updates the app image and environment variables configured by `ENV_OVERRIDES`.
 2. Creates an ALB Target Group for the PR.
 3. Adds an ALB Listener Rule (Host header matching `pr-<N>.<BASE_DOMAIN>`) that forwards to the Target Group.
 4. Creates (or updates) an ECS Service pointing to the new Task Definition and Target Group.
@@ -61,6 +61,9 @@ pr-preview delete --pr-number <N>
 | `HEALTH_CHECK_PATH` | `/healthz` | ALB health check path |
 | `ENV_OVERRIDES` | _(none)_ | Comma-separated `KEY=template` pairs that rewrite Task Definition env vars. Placeholders: `{pr_url}` (PR URL with scheme), `{pr_domain}` (PR hostname only). Literal values are passed through as-is. Example: `APP_URL={pr_url},MY_DOMAIN={pr_domain},DEBUG=false` |
 
+> [!IMPORTANT]
+> `ENV_OVERRIDES` is application-specific. If the base Task Definition contains production URLs, cookie domains, CORS origins, or auth callback hosts, set matching overrides so the preview task uses `{pr_url}` or `{pr_domain}` instead of inheriting production values.
+
 #### Notification (optional)
 
 | Variable | Description |
@@ -89,6 +92,9 @@ jobs:
       PR_RESOURCE_PREFIX: myapp-pr
       BASE_DOMAIN: example.com
       APP_ECR_REPOSITORY: myapp-app
+      # App-specific env rewrites for the copied Task Definition.
+      # Replace these keys with your app's URL/domain/cookie/auth env vars.
+      ENV_OVERRIDES: APP_URL={pr_url},COOKIE_DOMAIN={pr_domain},AUTH_CALLBACK_URL={pr_url}/auth/callback
       # Notification
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
       GITHUB_REPOSITORY: ${{ github.repository }}

@@ -1,0 +1,24 @@
+# Build outputs
+/bin/
+/dist/
+*.exe
+*.test
+
+# Go coverage/profiling
+coverage.out
+*.coverprofile
+*.prof
+
+# Local environment files
+.env
+.env.*
+!.env.example
+
+# OS/editor files
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# AI
+AGENTS.md
