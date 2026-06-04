@@ -3,14 +3,20 @@ package repository
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
 )
 
+type TaskDefinitionDescription struct {
+	TaskDefinition *ecstypes.TaskDefinition
+	Tags           []ecstypes.Tag
+}
+
 type ECSRepository interface {
-	DescribeTaskDefinition(ctx context.Context, family string) (*ecstypes.TaskDefinition, error)
+	DescribeTaskDefinition(ctx context.Context, family string) (*TaskDefinitionDescription, error)
 	RegisterTaskDefinition(ctx context.Context, input *ecs.RegisterTaskDefinitionInput) (string, error)
 	DescribeServiceNetworkConfig(ctx context.Context, cluster, service string) (*ecstypes.AwsVpcConfiguration, error)
 	DescribeServiceStatus(ctx context.Context, cluster, service string) (string, error)
@@ -29,14 +35,18 @@ func NewECSRepository(client *ecs.Client) ECSRepository {
 	return &ecsRepository{client: client}
 }
 
-func (r *ecsRepository) DescribeTaskDefinition(ctx context.Context, family string) (*ecstypes.TaskDefinition, error) {
+func (r *ecsRepository) DescribeTaskDefinition(ctx context.Context, family string) (*TaskDefinitionDescription, error) {
 	out, err := r.client.DescribeTaskDefinition(ctx, &ecs.DescribeTaskDefinitionInput{
 		TaskDefinition: aws.String(family),
+		Include:        []ecstypes.TaskDefinitionField{ecstypes.TaskDefinitionFieldTags},
 	})
 	if err != nil {
 		return nil, fmt.Errorf("describe task definition %s: %w", family, err)
 	}
-	return out.TaskDefinition, nil
+	return &TaskDefinitionDescription{
+		TaskDefinition: out.TaskDefinition,
+		Tags:           out.Tags,
+	}, nil
 }
 
 func (r *ecsRepository) RegisterTaskDefinition(ctx context.Context, input *ecs.RegisterTaskDefinitionInput) (string, error) {
@@ -108,13 +118,28 @@ func (r *ecsRepository) ListTaskDefinitionsByFamily(ctx context.Context, family 
 		if err != nil {
 			return arns, err
 		}
-		arns = append(arns, out.TaskDefinitionArns...)
+		for _, arn := range out.TaskDefinitionArns {
+			if taskDefinitionFamilyFromARN(arn) == family {
+				arns = append(arns, arn)
+			}
+		}
 		if out.NextToken == nil {
 			break
 		}
 		nextToken = out.NextToken
 	}
 	return arns, nil
+}
+
+func taskDefinitionFamilyFromARN(arn string) string {
+	name := arn
+	if slash := strings.LastIndex(name, "/"); slash >= 0 {
+		name = name[slash+1:]
+	}
+	if colon := strings.LastIndex(name, ":"); colon >= 0 {
+		name = name[:colon]
+	}
+	return name
 }
 
 func (r *ecsRepository) DeregisterTaskDefinition(ctx context.Context, arn string) error {

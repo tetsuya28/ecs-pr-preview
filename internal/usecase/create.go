@@ -4,13 +4,14 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"sort"
 
-	"github.com/tetsuya28/ecs-pr-preview/internal/domain"
-	"github.com/tetsuya28/ecs-pr-preview/internal/notification"
-	"github.com/tetsuya28/ecs-pr-preview/internal/repository"
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/service/ecs"
 	ecstypes "github.com/aws/aws-sdk-go-v2/service/ecs/types"
+	"github.com/tetsuya28/ecs-pr-preview/internal/domain"
+	"github.com/tetsuya28/ecs-pr-preview/internal/notification"
+	"github.com/tetsuya28/ecs-pr-preview/internal/repository"
 )
 
 // CreateUsecase orchestrates the creation (or update) of a PR preview environment.
@@ -42,11 +43,17 @@ func NewCreateUsecase(
 }
 
 // Execute creates or updates a PR preview environment.
-func (u *CreateUsecase) Execute(ctx context.Context, prNumber int, imageTag, ecrRegistry string) error {
+func (u *CreateUsecase) Execute(ctx context.Context, prNumber int, imageTag, ecrRegistry string) (err error) {
 	preview := domain.NewPRPreview(prNumber, u.cfg)
 	appImage := fmt.Sprintf("%s/%s:%s", ecrRegistry, u.cfg.AppECRRepository, imageTag)
 
 	_ = u.notifier.Notify(ctx, fmt.Sprintf(":rocket: Starting environment setup for PR #%d", prNumber))
+	defer func() {
+		if err != nil {
+			log.Printf("ERROR: create PR #%d failed: %v", prNumber, err)
+			_ = u.notifier.Notify(ctx, fmt.Sprintf(":x: [PR #%d] Environment setup failed: %v", prNumber, err))
+		}
+	}()
 
 	alb, err := u.elbv2.DescribeALB(ctx, u.cfg.ALBName)
 	if err != nil {
@@ -115,22 +122,38 @@ func (u *CreateUsecase) Execute(ctx context.Context, prNumber int, imageTag, ecr
 }
 
 func (u *CreateUsecase) registerTaskDef(ctx context.Context, preview domain.PRPreview, appImage string) (string, error) {
-	td, err := u.ecs.DescribeTaskDefinition(ctx, u.cfg.BaseTaskDef)
+	desc, err := u.ecs.DescribeTaskDefinition(ctx, u.cfg.BaseTaskDef)
+	if err != nil {
+		return "", err
+	}
+	input, err := buildRegisterTaskDefinitionInput(u.cfg, preview, desc, appImage)
 	if err != nil {
 		return "", err
 	}
 
+	return u.ecs.RegisterTaskDefinition(ctx, input)
+}
+
+func buildRegisterTaskDefinitionInput(cfg domain.Config, preview domain.PRPreview, desc *repository.TaskDefinitionDescription, appImage string) (*ecs.RegisterTaskDefinitionInput, error) {
+	if desc == nil || desc.TaskDefinition == nil {
+		return nil, fmt.Errorf("describe task definition %s: empty task definition", cfg.BaseTaskDef)
+	}
+	td := desc.TaskDefinition
+
 	// Pre-resolve all override values once.
-	resolved := make(map[string]string, len(u.cfg.EnvOverrides))
-	for key := range u.cfg.EnvOverrides {
-		if val, ok := u.cfg.EnvOverrides.Resolve(key, preview); ok {
+	resolved := make(map[string]string, len(cfg.EnvOverrides))
+	for key := range cfg.EnvOverrides {
+		if val, ok := cfg.EnvOverrides.Resolve(key, preview); ok {
 			resolved[key] = val
 		}
 	}
 
-	containers := td.ContainerDefinitions
+	containers := make([]ecstypes.ContainerDefinition, len(td.ContainerDefinitions))
+	copy(containers, td.ContainerDefinitions)
 	for i, c := range containers {
-		isApp := aws.ToString(c.Name) == u.cfg.AppContainerName
+		containers[i].Environment = append([]ecstypes.KeyValuePair(nil), c.Environment...)
+
+		isApp := aws.ToString(c.Name) == cfg.AppContainerName
 		if isApp {
 			containers[i].Image = aws.String(appImage)
 		}
@@ -147,7 +170,8 @@ func (u *CreateUsecase) registerTaskDef(ctx context.Context, preview domain.PRPr
 
 		// Append env vars that don't exist yet; only add to the app container.
 		if isApp {
-			for key, val := range resolved {
+			for _, key := range sortedKeys(resolved) {
+				val := resolved[key]
 				if !applied[key] {
 					containers[i].Environment = append(containers[i].Environment, ecstypes.KeyValuePair{
 						Name:  aws.String(key),
@@ -158,17 +182,34 @@ func (u *CreateUsecase) registerTaskDef(ctx context.Context, preview domain.PRPr
 		}
 	}
 
-	return u.ecs.RegisterTaskDefinition(ctx, &ecs.RegisterTaskDefinitionInput{
+	return &ecs.RegisterTaskDefinitionInput{
 		Family:                  aws.String(preview.Family),
 		ContainerDefinitions:    containers,
 		Cpu:                     td.Cpu,
+		EphemeralStorage:        td.EphemeralStorage,
 		Memory:                  td.Memory,
 		NetworkMode:             td.NetworkMode,
+		IpcMode:                 td.IpcMode,
+		PidMode:                 td.PidMode,
 		RequiresCompatibilities: td.RequiresCompatibilities,
 		ExecutionRoleArn:        td.ExecutionRoleArn,
+		InferenceAccelerators:   td.InferenceAccelerators,
+		PlacementConstraints:    td.PlacementConstraints,
+		ProxyConfiguration:      td.ProxyConfiguration,
+		RuntimePlatform:         td.RuntimePlatform,
+		Tags:                    desc.Tags,
 		TaskRoleArn:             td.TaskRoleArn,
 		Volumes:                 td.Volumes,
-	})
+	}, nil
+}
+
+func sortedKeys(values map[string]string) []string {
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	return keys
 }
 
 func (u *CreateUsecase) ensureService(ctx context.Context, preview domain.PRPreview, taskDefARN, tgARN string, netCfg *ecstypes.AwsVpcConfiguration) error {

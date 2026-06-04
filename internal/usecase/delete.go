@@ -39,10 +39,16 @@ func NewDeleteUsecase(
 }
 
 // Execute deletes all AWS resources associated with the PR preview environment.
-func (u *DeleteUsecase) Execute(ctx context.Context, prNumber int) error {
+func (u *DeleteUsecase) Execute(ctx context.Context, prNumber int) (err error) {
 	preview := domain.NewPRPreview(prNumber, u.cfg)
 
 	_ = u.notifier.Notify(ctx, fmt.Sprintf(":broom: Starting environment teardown for PR #%d", prNumber))
+	defer func() {
+		if err != nil {
+			log.Printf("ERROR: delete PR #%d failed: %v", prNumber, err)
+			_ = u.notifier.Notify(ctx, fmt.Sprintf(":x: [PR #%d] Environment teardown failed: %v", prNumber, err))
+		}
+	}()
 
 	alb, err := u.elbv2.DescribeALB(ctx, u.cfg.ALBName)
 	if err != nil {
@@ -74,7 +80,9 @@ func (u *DeleteUsecase) Execute(ctx context.Context, prNumber int) error {
 	log.Printf("==> Deleting Listener Rule: %s", preview.Domain)
 	_ = u.notifier.Notify(ctx, fmt.Sprintf(":gear: [PR #%d] Deleting Listener Rule...", prNumber))
 	ruleARN, err := u.elbv2.FindListenerRuleARN(ctx, listenerARN, preview.Domain)
-	if err == nil && ruleARN != "" {
+	if err != nil {
+		warn("find Listener Rule", err)
+	} else if ruleARN != "" {
 		if err := u.elbv2.DeleteListenerRule(ctx, ruleARN); err != nil {
 			warn("delete Listener Rule", err)
 		} else {
@@ -94,20 +102,32 @@ func (u *DeleteUsecase) Execute(ctx context.Context, prNumber int) error {
 	// 4. Deregister all Task Definition revisions
 	log.Printf("==> Deregistering TaskDefs: %s", preview.Family)
 	_ = u.notifier.Notify(ctx, fmt.Sprintf(":gear: [PR #%d] Deregistering Task Definitions...", prNumber))
-	if arns, err := u.ecs.ListTaskDefinitionsByFamily(ctx, preview.Family); err == nil {
+	if arns, err := u.ecs.ListTaskDefinitionsByFamily(ctx, preview.Family); err != nil {
+		warn("list Task Definitions", err)
+	} else {
+		deregisterFailed := false
 		for _, arn := range arns {
-			_ = u.ecs.DeregisterTaskDefinition(ctx, arn)
+			if err := u.ecs.DeregisterTaskDefinition(ctx, arn); err != nil {
+				deregisterFailed = true
+				warn(fmt.Sprintf("deregister Task Definition %s", arn), err)
+			}
 		}
-		_ = u.notifier.Notify(ctx, fmt.Sprintf(":white_check_mark: [PR #%d] Task Definitions deregistered", prNumber))
+		if !deregisterFailed {
+			_ = u.notifier.Notify(ctx, fmt.Sprintf(":white_check_mark: [PR #%d] Task Definitions deregistered", prNumber))
+		}
 	}
 
 	// 5. Delete Route53 A record
 	log.Printf("==> Deleting Route53: %s", preview.Domain)
 	_ = u.notifier.Notify(ctx, fmt.Sprintf(":gear: [PR #%d] Deleting Route53 record...", prNumber))
 	if err := u.r53.DeleteAliasRecord(ctx, u.cfg.HostedZoneID, preview.Domain, alb.DNSName, alb.CanonicalZoneID); err != nil {
-		log.Printf("WARN: delete Route53 record: %v", err)
+		warn("delete Route53 record", err)
 	} else {
 		_ = u.notifier.Notify(ctx, fmt.Sprintf(":white_check_mark: [PR #%d] Route53 record deleted", prNumber))
+	}
+
+	if firstErr != nil {
+		return firstErr
 	}
 
 	_ = u.notifier.Notify(ctx, fmt.Sprintf(":recycle: [PR #%d] Environment teardown complete", prNumber))
@@ -119,5 +139,5 @@ func (u *DeleteUsecase) Execute(ctx context.Context, prNumber int) error {
 	}
 
 	log.Printf("==> Done")
-	return firstErr
+	return nil
 }
