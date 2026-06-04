@@ -197,10 +197,19 @@ func buildRegisterTaskDefinitionInput(cfg domain.Config, preview domain.PRPrevie
 		PlacementConstraints:    td.PlacementConstraints,
 		ProxyConfiguration:      td.ProxyConfiguration,
 		RuntimePlatform:         td.RuntimePlatform,
-		Tags:                    desc.Tags,
+		Tags:                    emptyToNil(desc.Tags),
 		TaskRoleArn:             td.TaskRoleArn,
 		Volumes:                 td.Volumes,
 	}, nil
+}
+
+// emptyToNil returns nil when the slice is empty so the ECS API does not
+// reject the request with "Tags can not be empty".
+func emptyToNil[T any](s []T) []T {
+	if len(s) == 0 {
+		return nil
+	}
+	return s
 }
 
 func sortedKeys(values map[string]string) []string {
