@@ -53,8 +53,12 @@ func initDeps(cmd *cobra.Command) (
 	r53Repo := repository.NewRoute53Repository(route53.NewFromConfig(awsCfg))
 
 	var notifiers notification.MultiNotifier
-	if url := os.Getenv("SLACK_WEBHOOK_URL"); url != "" {
-		notifiers = append(notifiers, notification.NewSlackNotifier(url))
+	slackBotToken := os.Getenv("SLACK_BOT_TOKEN")
+	slackChannelID := os.Getenv("SLACK_CHANNEL_ID")
+	if slackBotToken != "" && slackChannelID != "" {
+		notifiers = append(notifiers, notification.NewSlackNotifier(slackBotToken, slackChannelID))
+	} else if slackBotToken != "" || slackChannelID != "" {
+		log.Printf("WARN: set both SLACK_BOT_TOKEN and SLACK_CHANNEL_ID to enable Slack threaded notifications")
 	}
 
 	var commenter notification.Commenter
@@ -120,4 +124,3 @@ func newDeleteCmd() *cobra.Command {
 	_ = cmd.MarkFlagRequired("pr-number")
 	return cmd
 }
-

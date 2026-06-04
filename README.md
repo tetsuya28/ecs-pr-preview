@@ -68,10 +68,13 @@ pr-preview delete --pr-number <N>
 
 | Variable | Description |
 |---|---|
-| `SLACK_WEBHOOK_URL` | Slack Incoming Webhook URL for step-by-step notifications |
+| `SLACK_BOT_TOKEN` | Slack bot token for threaded step-by-step notifications (requires `chat:write`) |
+| `SLACK_CHANNEL_ID` | Slack channel ID for threaded step-by-step notifications |
 | `GITHUB_TOKEN` | GitHub token for PR comments (requires `pull_requests: write`) |
 | `GITHUB_REPOSITORY` | Repository in `owner/repo` format |
 | `PR_NUMBER` | PR number (used by the GitHub commenter) |
+
+When `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_ID` are set, the first Slack notification is posted as the parent message and all subsequent step notifications are posted in that thread. The bot must be a member of the channel.
 
 ### GitHub Actions example
 
@@ -96,7 +99,8 @@ jobs:
       # Replace these keys with your app's URL/domain/cookie/auth env vars.
       ENV_OVERRIDES: APP_URL={pr_url},COOKIE_DOMAIN={pr_domain},AUTH_CALLBACK_URL={pr_url}/auth/callback
       # Notification
-      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
       GITHUB_REPOSITORY: ${{ github.repository }}
     steps:
       - uses: actions/setup-go@v5
@@ -133,7 +137,8 @@ jobs:
       PR_RESOURCE_PREFIX: myapp-pr
       BASE_DOMAIN: example.com
       APP_ECR_REPOSITORY: myapp-app
-      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+      SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
+      SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}
       GITHUB_REPOSITORY: ${{ github.repository }}
     steps:
       - uses: actions/setup-go@v5
