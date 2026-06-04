@@ -8,7 +8,6 @@ import (
 )
 
 // Config holds all configuration for the ECS PR Preview tool.
-// Each field is populated from environment variables.
 type Config struct {
 	// AWS resource names
 	ClusterName  string // ECS_CLUSTER_NAME
@@ -23,7 +22,7 @@ type Config struct {
 
 	// Domain
 	// PR domain is built as: PRSubdomainPrefix + "-" + prNumber + "." + BaseDomain
-	BaseDomain        string // BASE_DOMAIN         (e.g. "example.com")
+	BaseDomain        string // Derived from HOSTED_ZONE_ID (e.g. "example.com")
 	PRSubdomainPrefix string // PR_SUBDOMAIN_PREFIX (e.g. "pr" → "pr-123.example.com")
 
 	// Container settings
@@ -54,7 +53,7 @@ func (o EnvOverrides) Resolve(key string, preview PRPreview) (string, bool) {
 		return "", false
 	}
 	val := strings.NewReplacer(
-		"{pr_url}",    preview.AppURL,
+		"{pr_url}", preview.AppURL,
 		"{pr_domain}", preview.Domain,
 	).Replace(tmpl)
 	return val, true
@@ -69,7 +68,6 @@ func ConfigFromEnv() (Config, error) {
 		HostedZoneID:      os.Getenv("HOSTED_ZONE_ID"),
 		BaseTaskDef:       os.Getenv("BASE_TASK_DEF"),
 		PRResourcePrefix:  os.Getenv("PR_RESOURCE_PREFIX"),
-		BaseDomain:        os.Getenv("BASE_DOMAIN"),
 		AppECRRepository:  os.Getenv("APP_ECR_REPOSITORY"),
 		BaseService:       getEnvDefault("BASE_SERVICE", os.Getenv("ECS_CLUSTER_NAME")),
 		PRSubdomainPrefix: getEnvDefault("PR_SUBDOMAIN_PREFIX", "pr"),
@@ -92,7 +90,6 @@ func ConfigFromEnv() (Config, error) {
 		{"HOSTED_ZONE_ID", cfg.HostedZoneID},
 		{"BASE_TASK_DEF", cfg.BaseTaskDef},
 		{"PR_RESOURCE_PREFIX", cfg.PRResourcePrefix},
-		{"BASE_DOMAIN", cfg.BaseDomain},
 		{"APP_ECR_REPOSITORY", cfg.AppECRRepository},
 	} {
 		if pair.val == "" {

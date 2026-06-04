@@ -7,9 +7,9 @@ A CLI tool that creates and deletes per-PR preview environments on AWS ECS (Farg
 On `create`:
 1. Copies the base Task Definition and updates the app image and environment variables configured by `ENV_OVERRIDES`.
 2. Creates an ALB Target Group for the PR.
-3. Adds an ALB Listener Rule (Host header matching `pr-<N>.<BASE_DOMAIN>`) that forwards to the Target Group.
+3. Adds an ALB Listener Rule (Host header matching `pr-<N>.<hosted-zone-domain>`) that forwards to the Target Group.
 4. Creates (or updates) an ECS Service pointing to the new Task Definition and Target Group.
-5. Upserts a Route53 A alias record pointing `pr-<N>.<BASE_DOMAIN>` to the ALB.
+5. Upserts a Route53 A alias record pointing `pr-<N>.<hosted-zone-domain>` to the ALB.
 
 On `delete`, the above resources are removed in reverse order.
 
@@ -20,7 +20,7 @@ On `delete`, the above resources are removed in reverse order.
 - Go 1.26+
 - AWS credentials with permissions for ECS, ELBV2, and Route53.
 - An existing ECS cluster, ALB, and a Route53 hosted zone.
-- ACM certificate covering `*.<BASE_DOMAIN>` attached to the ALB HTTPS listener.
+- ACM certificate covering `*.<hosted-zone-domain>` attached to the ALB HTTPS listener.
 
 ### Install
 
@@ -46,15 +46,16 @@ pr-preview delete --pr-number <N>
 | `HOSTED_ZONE_ID` | Route53 hosted zone ID | `Z1234567890ABCDEF` |
 | `BASE_TASK_DEF` | Task Definition family to copy | `myapp` |
 | `PR_RESOURCE_PREFIX` | Prefix for all PR resources (TG / Service / TaskDef) | `myapp-pr` |
-| `BASE_DOMAIN` | Base domain for PR URLs | `example.com` |
 | `APP_ECR_REPOSITORY` | ECR repository name for the app image | `myapp-app` |
+
+The PR base domain is derived from the Route53 hosted zone name for `HOSTED_ZONE_ID`. For a hosted zone named `example.com.`, PR #123 uses `pr-123.example.com`.
 
 #### Optional (with defaults)
 
 | Variable | Default | Description |
 |---|---|---|
 | `BASE_SERVICE` | `ECS_CLUSTER_NAME` | ECS Service used to inherit network configuration |
-| `PR_SUBDOMAIN_PREFIX` | `pr` | Subdomain prefix (`pr-<N>.<BASE_DOMAIN>`) |
+| `PR_SUBDOMAIN_PREFIX` | `pr` | Subdomain prefix (`pr-<N>.<hosted-zone-domain>`) |
 | `APP_CONTAINER_NAME` | `app` | Container name in the Task Definition to update the image |
 | `LB_CONTAINER_NAME` | `nginx` | Container name registered to the ALB Target Group |
 | `LB_CONTAINER_PORT` | `80` | Port of `LB_CONTAINER_NAME` |
@@ -75,6 +76,13 @@ pr-preview delete --pr-number <N>
 
 When `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_ID` are set, the first Slack notification is posted as the parent message and all subsequent step notifications are posted in that thread. The bot must be a member of the channel.
 
+Slack App requirements:
+
+- Use the Bot User OAuth Token (`xoxb-...`) as `SLACK_BOT_TOKEN`.
+- Add the Bot Token Scope `chat:write`.
+- Invite the bot to the target channel (`/invite @your_app`) and set that channel ID as `SLACK_CHANNEL_ID`.
+- Optional: add `chat:write.public` only if you want the app to post to public channels without inviting the bot first.
+
 ### GitHub Actions example
 
 ```yaml
@@ -91,7 +99,6 @@ jobs:
       HOSTED_ZONE_ID: ${{ secrets.ROUTE53_HOSTED_ZONE_ID }}
       BASE_TASK_DEF: myapp
       PR_RESOURCE_PREFIX: myapp-pr
-      BASE_DOMAIN: example.com
       APP_ECR_REPOSITORY: myapp-app
       # App-specific env rewrites for the copied Task Definition.
       # Replace these keys with your app's URL/domain/cookie/auth env vars.
@@ -132,7 +139,6 @@ jobs:
       HOSTED_ZONE_ID: ${{ secrets.ROUTE53_HOSTED_ZONE_ID }}
       BASE_TASK_DEF: myapp
       PR_RESOURCE_PREFIX: myapp-pr
-      BASE_DOMAIN: example.com
       APP_ECR_REPOSITORY: myapp-app
       SLACK_BOT_TOKEN: ${{ secrets.SLACK_BOT_TOKEN }}
       SLACK_CHANNEL_ID: ${{ secrets.SLACK_CHANNEL_ID }}

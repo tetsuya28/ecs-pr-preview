@@ -50,6 +50,11 @@ func initDeps(cmd *cobra.Command, prNumber int) (
 	ecsRepo := repository.NewECSRepository(awsecs.NewFromConfig(awsCfg))
 	elbv2Repo := repository.NewELBV2Repository(elasticloadbalancingv2.NewFromConfig(awsCfg))
 	r53Repo := repository.NewRoute53Repository(route53.NewFromConfig(awsCfg))
+	baseDomain, err := r53Repo.HostedZoneDomain(cmd.Context(), cfg.HostedZoneID)
+	if err != nil {
+		return domain.Config{}, nil, nil, nil, nil, nil, err
+	}
+	cfg.BaseDomain = baseDomain
 
 	var notifiers notification.MultiNotifier
 	slackBotToken := os.Getenv("SLACK_BOT_TOKEN")

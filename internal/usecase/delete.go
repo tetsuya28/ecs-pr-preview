@@ -66,11 +66,19 @@ func (u *DeleteUsecase) Execute(ctx context.Context, prNumber int) (err error) {
 			firstErr = err
 		}
 	}
+	warnNonFatal := func(step string, err error) {
+		log.Printf("WARN: %s: %v", step, err)
+		_ = u.notifier.Notify(ctx, fmt.Sprintf(":warning: [PR #%d] %s skipped: %v", prNumber, step, err))
+	}
 
 	// 1. Drain and delete ECS Service
 	log.Printf("==> Deleting ECS Service: %s", preview.ServiceName)
 	_ = u.notifier.Notify(ctx, fmt.Sprintf(":gear: [PR #%d] Deleting ECS Service...", prNumber))
-	if err := u.ecs.DrainAndDeleteService(ctx, u.cfg.ClusterName, preview.ServiceName); err != nil {
+	if status, err := u.ecs.DescribeServiceStatus(ctx, u.cfg.ClusterName, preview.ServiceName); err != nil {
+		warn("find ECS Service", err)
+	} else if status == "" || status == "INACTIVE" {
+		warnNonFatal("delete ECS Service", fmt.Errorf("service %s not found", preview.ServiceName))
+	} else if err := u.ecs.DrainAndDeleteService(ctx, u.cfg.ClusterName, preview.ServiceName); err != nil {
 		warn("delete ECS Service", err)
 	} else {
 		_ = u.notifier.Notify(ctx, fmt.Sprintf(":white_check_mark: [PR #%d] ECS Service deleted", prNumber))
@@ -120,10 +128,20 @@ func (u *DeleteUsecase) Execute(ctx context.Context, prNumber int) (err error) {
 	// 5. Delete Route53 A record
 	log.Printf("==> Deleting Route53: %s", preview.Domain)
 	_ = u.notifier.Notify(ctx, fmt.Sprintf(":gear: [PR #%d] Deleting Route53 record...", prNumber))
-	if err := u.r53.DeleteAliasRecord(ctx, u.cfg.HostedZoneID, preview.Domain, alb.DNSName, alb.CanonicalZoneID); err != nil {
-		warn("delete Route53 record", err)
+	if exists, err := u.r53.AliasRecordExists(ctx, u.cfg.HostedZoneID, preview.Domain); err != nil {
+		warn("find Route53 record", err)
+	} else if !exists {
+		warnNonFatal("delete Route53 record", fmt.Errorf("record %s A not found", preview.Domain))
 	} else {
-		_ = u.notifier.Notify(ctx, fmt.Sprintf(":white_check_mark: [PR #%d] Route53 record deleted", prNumber))
+		if err := u.r53.DeleteAliasRecord(ctx, u.cfg.HostedZoneID, preview.Domain, alb.DNSName, alb.CanonicalZoneID); err != nil {
+			if repository.IsRoute53RecordNotFound(err) {
+				warnNonFatal("delete Route53 record", err)
+			} else {
+				warn("delete Route53 record", err)
+			}
+		} else {
+			_ = u.notifier.Notify(ctx, fmt.Sprintf(":white_check_mark: [PR #%d] Route53 record deleted", prNumber))
+		}
 	}
 
 	if firstErr != nil {

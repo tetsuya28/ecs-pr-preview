@@ -73,7 +73,15 @@ func (r *ecsRepository) DescribeServiceStatus(ctx context.Context, cluster, serv
 		Cluster:  aws.String(cluster),
 		Services: []string{service},
 	})
-	if err != nil || len(out.Services) == 0 {
+	if err != nil {
+		return "", fmt.Errorf("describe service %s/%s: %w", cluster, service, err)
+	}
+	for _, failure := range out.Failures {
+		if !strings.EqualFold(aws.ToString(failure.Reason), "MISSING") {
+			return "", fmt.Errorf("describe service %s/%s: %s %s", cluster, service, aws.ToString(failure.Reason), aws.ToString(failure.Detail))
+		}
+	}
+	if len(out.Services) == 0 {
 		return "", nil
 	}
 	return aws.ToString(out.Services[0].Status), nil
