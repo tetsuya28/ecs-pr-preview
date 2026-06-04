@@ -72,7 +72,6 @@ pr-preview delete --pr-number <N>
 | `SLACK_CHANNEL_ID` | Slack channel ID for threaded step-by-step notifications |
 | `GITHUB_TOKEN` | GitHub token for PR comments (requires `pull_requests: write`) |
 | `GITHUB_REPOSITORY` | Repository in `owner/repo` format |
-| `PR_NUMBER` | PR number (used by the GitHub commenter) |
 
 When `SLACK_BOT_TOKEN` and `SLACK_CHANNEL_ID` are set, the first Slack notification is posted as the parent message and all subsequent step notifications are posted in that thread. The bot must be a member of the channel.
 
@@ -86,7 +85,6 @@ jobs:
     environment: development
     env:
       AWS_REGION: ap-northeast-1
-      PR_NUMBER: ${{ github.event.pull_request.number }}
       # Required config
       ECS_CLUSTER_NAME: myapp
       ALB_NAME: myapp
@@ -105,7 +103,7 @@ jobs:
     steps:
       - uses: actions/setup-go@v5
         with:
-          go-version: "1.22"
+          go-version: "1.26"
       - name: Set AWS credentials
         uses: aws-actions/configure-aws-credentials@v6
         with:
@@ -117,7 +115,7 @@ jobs:
       - name: Create PR environment
         run: |
           go run github.com/tetsuya28/ecs-pr-preview/cmd/pr-preview@latest create \
-            --pr-number "${{ env.PR_NUMBER }}" \
+            --pr-number "${{ github.event.pull_request.number }}" \
             --image-tag "${{ github.event.pull_request.head.sha }}" \
             --ecr-registry "${{ steps.login-ecr.outputs.registry }}"
 
@@ -129,7 +127,6 @@ jobs:
     environment: development
     env:
       AWS_REGION: ap-northeast-1
-      PR_NUMBER: ${{ github.event.pull_request.number }}
       ECS_CLUSTER_NAME: myapp
       ALB_NAME: myapp
       HOSTED_ZONE_ID: ${{ secrets.ROUTE53_HOSTED_ZONE_ID }}
@@ -152,5 +149,5 @@ jobs:
       - name: Delete PR environment
         run: |
           go run github.com/tetsuya28/ecs-pr-preview/cmd/pr-preview@latest delete \
-            --pr-number "${{ env.PR_NUMBER }}"
+            --pr-number "${{ github.event.pull_request.number }}"
 ```

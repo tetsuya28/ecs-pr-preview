@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"log"
 	"os"
-	"strconv"
 
 	"github.com/aws/aws-sdk-go-v2/config"
 	awsecs "github.com/aws/aws-sdk-go-v2/service/ecs"
@@ -29,7 +28,7 @@ func main() {
 	}
 }
 
-func initDeps(cmd *cobra.Command) (
+func initDeps(cmd *cobra.Command, prNumber int) (
 	domain.Config,
 	repository.ECSRepository,
 	repository.ELBV2Repository,
@@ -61,22 +60,25 @@ func initDeps(cmd *cobra.Command) (
 		log.Printf("WARN: set both SLACK_BOT_TOKEN and SLACK_CHANNEL_ID to enable Slack threaded notifications")
 	}
 
-	var commenter notification.Commenter
-	token := os.Getenv("GITHUB_TOKEN")
-	ghRepo := os.Getenv("GITHUB_REPOSITORY")
-	prStr := os.Getenv("PR_NUMBER")
-	if token != "" && ghRepo != "" && prStr != "" {
-		if prNum, err := strconv.Atoi(prStr); err == nil {
-			c, err := notification.NewGitHubCommenter(token, ghRepo, prNum)
-			if err != nil {
-				log.Printf("WARN: failed to init GitHub commenter: %v", err)
-			} else {
-				commenter = c
-			}
-		}
-	}
+	commenter := buildGitHubCommenter(os.Getenv("GITHUB_TOKEN"), os.Getenv("GITHUB_REPOSITORY"), prNumber)
 
 	return cfg, ecsRepo, elbv2Repo, r53Repo, notifiers, commenter, nil
+}
+
+func buildGitHubCommenter(token, repository string, prNumber int) notification.Commenter {
+	if token == "" || repository == "" {
+		return nil
+	}
+	if prNumber < 0 {
+		log.Printf("WARN: --pr-number must be >= 0 for GitHub commenter")
+		return nil
+	}
+	commenter, err := notification.NewGitHubCommenter(token, repository, prNumber)
+	if err != nil {
+		log.Printf("WARN: failed to init GitHub commenter: %v", err)
+		return nil
+	}
+	return commenter
 }
 
 func newCreateCmd() *cobra.Command {
@@ -88,7 +90,10 @@ func newCreateCmd() *cobra.Command {
 		Use:   "create",
 		Short: "Create or update a PR preview environment",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, ecsRepo, elbv2Repo, r53Repo, notifier, commenter, err := initDeps(cmd)
+			if err := validatePRNumber(prNumber); err != nil {
+				return err
+			}
+			cfg, ecsRepo, elbv2Repo, r53Repo, notifier, commenter, err := initDeps(cmd, prNumber)
 			if err != nil {
 				return err
 			}
@@ -112,7 +117,10 @@ func newDeleteCmd() *cobra.Command {
 		Use:   "delete",
 		Short: "Delete a PR preview environment",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, ecsRepo, elbv2Repo, r53Repo, notifier, commenter, err := initDeps(cmd)
+			if err := validatePRNumber(prNumber); err != nil {
+				return err
+			}
+			cfg, ecsRepo, elbv2Repo, r53Repo, notifier, commenter, err := initDeps(cmd, prNumber)
 			if err != nil {
 				return err
 			}
@@ -123,4 +131,11 @@ func newDeleteCmd() *cobra.Command {
 	cmd.Flags().IntVar(&prNumber, "pr-number", 0, "Pull request number (required)")
 	_ = cmd.MarkFlagRequired("pr-number")
 	return cmd
+}
+
+func validatePRNumber(prNumber int) error {
+	if prNumber < 0 {
+		return fmt.Errorf("--pr-number must be >= 0")
+	}
+	return nil
 }
