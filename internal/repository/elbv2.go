@@ -26,7 +26,7 @@ type ELBV2Repository interface {
 	EnsureListenerRule(ctx context.Context, listenerARN, domain, tgARN string, prNumber int) error
 	FindListenerRuleARN(ctx context.Context, listenerARN, domain string) (string, error)
 	DeleteListenerRule(ctx context.Context, ruleARN string) error
-	DeleteTargetGroup(ctx context.Context, tgName string) error
+	DeleteTargetGroup(ctx context.Context, tgName string) (bool, error)
 }
 
 type elbv2Repository struct {
@@ -185,12 +185,12 @@ func (r *elbv2Repository) DeleteListenerRule(ctx context.Context, ruleARN string
 	return err
 }
 
-func (r *elbv2Repository) DeleteTargetGroup(ctx context.Context, tgName string) error {
+func (r *elbv2Repository) DeleteTargetGroup(ctx context.Context, tgName string) (bool, error) {
 	out, err := r.client.DescribeTargetGroups(ctx, &elasticloadbalancingv2.DescribeTargetGroupsInput{
 		Names: []string{tgName},
 	})
 	if err != nil || len(out.TargetGroups) == 0 {
-		return nil
+		return false, nil
 	}
 	tgARN := aws.ToString(out.TargetGroups[0].TargetGroupArn)
 
@@ -208,5 +208,5 @@ func (r *elbv2Repository) DeleteTargetGroup(ctx context.Context, tgName string) 
 	_, err = r.client.DeleteTargetGroup(ctx, &elasticloadbalancingv2.DeleteTargetGroupInput{
 		TargetGroupArn: aws.String(tgARN),
 	})
-	return err
+	return err == nil, err
 }

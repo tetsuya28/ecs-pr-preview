@@ -86,6 +86,31 @@ func TestDeleteUsecaseSkipsMissingECSService(t *testing.T) {
 	}
 }
 
+func TestDeleteUsecaseAllResourcesMissing(t *testing.T) {
+	notifier := &collectingNotifier{}
+	commenter := &collectingCommenter{}
+	err := NewDeleteUsecase(
+		deleteTestConfig(),
+		&deleteTestECS{serviceStatus: ""},
+		&deleteTestELBV2{tgExists: false, ruleExists: false},
+		&deleteTestRoute53{recordExists: false},
+		notifier,
+		commenter,
+	).Execute(context.Background(), 9999)
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if notifier.contains("Environment teardown complete") {
+		t.Fatal("should not notify teardown complete when no resources exist")
+	}
+	if notifier.contains("Environment teardown failed") {
+		t.Fatal("should not notify teardown failed when no resources exist")
+	}
+	if commenter.hasComment {
+		t.Fatal("should not post PR comment when no resources exist")
+	}
+}
+
 func deleteTestConfig() domain.Config {
 	return domain.Config{
 		ClusterName:       "cluster",
@@ -123,6 +148,17 @@ func (n *collectingNotifier) contains(needle string) bool {
 		}
 	}
 	return false
+}
+
+type collectingCommenter struct {
+	hasComment bool
+}
+
+var _ notification.Commenter = (*collectingCommenter)(nil)
+
+func (c *collectingCommenter) UpsertComment(_ context.Context, _, _ string) error {
+	c.hasComment = true
+	return nil
 }
 
 type deleteTestECS struct {
@@ -169,7 +205,10 @@ func (e *deleteTestECS) DeregisterTaskDefinition(context.Context, string) error 
 	return nil
 }
 
-type deleteTestELBV2 struct{}
+type deleteTestELBV2 struct {
+	tgExists   bool
+	ruleExists bool
+}
 
 var _ repository.ELBV2Repository = (*deleteTestELBV2)(nil)
 
@@ -195,15 +234,18 @@ func (e *deleteTestELBV2) EnsureListenerRule(context.Context, string, string, st
 }
 
 func (e *deleteTestELBV2) FindListenerRuleARN(context.Context, string, string) (string, error) {
-	return "rule-arn", nil
+	if e.ruleExists {
+		return "rule-arn", nil
+	}
+	return "", nil
 }
 
 func (e *deleteTestELBV2) DeleteListenerRule(context.Context, string) error {
 	return nil
 }
 
-func (e *deleteTestELBV2) DeleteTargetGroup(context.Context, string) error {
-	return nil
+func (e *deleteTestELBV2) DeleteTargetGroup(context.Context, string) (bool, error) {
+	return e.tgExists, nil
 }
 
 type deleteTestRoute53 struct {

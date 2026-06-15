@@ -42,6 +42,8 @@ func NewDeleteUsecase(
 func (u *DeleteUsecase) Execute(ctx context.Context, prNumber int) (err error) {
 	preview := domain.NewPRPreview(prNumber, u.cfg)
 
+	existed := false // true if at least one resource was found
+
 	_ = u.notifier.Notify(ctx, fmt.Sprintf(":broom: Starting environment teardown for PR #%d", prNumber))
 	defer func() {
 		if err != nil {
@@ -78,10 +80,13 @@ func (u *DeleteUsecase) Execute(ctx context.Context, prNumber int) (err error) {
 		warn("find ECS Service", err)
 	} else if status == "" || status == "INACTIVE" {
 		warnNonFatal("delete ECS Service", fmt.Errorf("service %s not found", preview.ServiceName))
-	} else if err := u.ecs.DrainAndDeleteService(ctx, u.cfg.ClusterName, preview.ServiceName); err != nil {
-		warn("delete ECS Service", err)
 	} else {
-		_ = u.notifier.Notify(ctx, fmt.Sprintf(":white_check_mark: [PR #%d] ECS Service deleted", prNumber))
+		existed = true
+		if err := u.ecs.DrainAndDeleteService(ctx, u.cfg.ClusterName, preview.ServiceName); err != nil {
+			warn("delete ECS Service", err)
+		} else {
+			_ = u.notifier.Notify(ctx, fmt.Sprintf(":white_check_mark: [PR #%d] ECS Service deleted", prNumber))
+		}
 	}
 
 	// 2. Delete Listener Rule
@@ -91,6 +96,7 @@ func (u *DeleteUsecase) Execute(ctx context.Context, prNumber int) (err error) {
 	if err != nil {
 		warn("find Listener Rule", err)
 	} else if ruleARN != "" {
+		existed = true
 		if err := u.elbv2.DeleteListenerRule(ctx, ruleARN); err != nil {
 			warn("delete Listener Rule", err)
 		} else {
@@ -101,9 +107,10 @@ func (u *DeleteUsecase) Execute(ctx context.Context, prNumber int) (err error) {
 	// 3. Delete Target Group (waits for target deregistration)
 	log.Printf("==> Deleting Target Group: %s", preview.TGName)
 	_ = u.notifier.Notify(ctx, fmt.Sprintf(":gear: [PR #%d] Deleting Target Group...", prNumber))
-	if err := u.elbv2.DeleteTargetGroup(ctx, preview.TGName); err != nil {
+	if deleted, err := u.elbv2.DeleteTargetGroup(ctx, preview.TGName); err != nil {
 		warn("delete Target Group", err)
-	} else {
+	} else if deleted {
+		existed = true
 		_ = u.notifier.Notify(ctx, fmt.Sprintf(":white_check_mark: [PR #%d] Target Group deleted", prNumber))
 	}
 
@@ -112,7 +119,8 @@ func (u *DeleteUsecase) Execute(ctx context.Context, prNumber int) (err error) {
 	_ = u.notifier.Notify(ctx, fmt.Sprintf(":gear: [PR #%d] Deregistering Task Definitions...", prNumber))
 	if arns, err := u.ecs.ListTaskDefinitionsByFamily(ctx, preview.Family); err != nil {
 		warn("list Task Definitions", err)
-	} else {
+	} else if len(arns) > 0 {
+		existed = true
 		deregisterFailed := false
 		for _, arn := range arns {
 			if err := u.ecs.DeregisterTaskDefinition(ctx, arn); err != nil {
@@ -133,6 +141,7 @@ func (u *DeleteUsecase) Execute(ctx context.Context, prNumber int) (err error) {
 	} else if !exists {
 		warnNonFatal("delete Route53 record", fmt.Errorf("record %s A not found", preview.Domain))
 	} else {
+		existed = true
 		if err := u.r53.DeleteAliasRecord(ctx, u.cfg.HostedZoneID, preview.Domain, alb.DNSName, alb.CanonicalZoneID); err != nil {
 			if repository.IsRoute53RecordNotFound(err) {
 				warnNonFatal("delete Route53 record", err)
@@ -146,6 +155,11 @@ func (u *DeleteUsecase) Execute(ctx context.Context, prNumber int) (err error) {
 
 	if firstErr != nil {
 		return firstErr
+	}
+
+	if !existed {
+		log.Printf("INFO: no preview environment found for PR #%d, skipping", prNumber)
+		return nil
 	}
 
 	_ = u.notifier.Notify(ctx, fmt.Sprintf(":recycle: [PR #%d] Environment teardown complete", prNumber))
